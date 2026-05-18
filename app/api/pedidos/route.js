@@ -29,7 +29,7 @@ export async function POST(req) {
     let pedidoId = id;
 
     // Iniciar transacción en la base de datos
-    const upsertPedido = db.transaction(() => {
+    const upsertPedido = db.batch(() => {
       if (pedidoId && pedidoId !== 'null') {
         const update = db.prepare(`
           UPDATE pedidos SET 
