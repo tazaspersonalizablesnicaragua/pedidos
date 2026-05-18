@@ -13,8 +13,8 @@ export async function POST(req) {
     const telefono = formData.get('telefono');
     const fecha_solicitud = formData.get('fecha_solicitud');
     const fecha_entrega = formData.get('fecha_entrega');
-    const notificar_entrega = formData.get('notificar_entrega') === 'true';
-    const requiere_envio = formData.get('requiere_envio') === 'true';
+    const notificar_entrega = formData.get('notificar_entrega') === 'true' ? 1 : 0;
+    const requiere_envio = formData.get('requiere_envio') === 'true' ? 1 : 0;
     const direccion_envio = formData.get('direccion_envio');
     const notas = formData.get('notas');
     const estado = formData.get('estado');
@@ -26,47 +26,54 @@ export async function POST(req) {
     // Extraer archivos
     const files = formData.getAll('images');
 
-    let pedidoId = id;
+    let finalId = id;
 
-    // Iniciar transacción en la base de datos
-    const upsertPedido = db.batch(() => {
-      if (pedidoId && pedidoId !== 'null') {
-        const update = db.prepare(`
+    // --- TRANSACCIÓN EN SQLITE CLOUD ---
+    // Iniciamos de forma asíncrona un bloque estructurado de transacciones
+    await db.sql`BEGIN IMMEDIATE TRANSACTION;`;
+
+    try {
+      if (finalId && finalId !== 'null') {
+        // Operación de Actualización (Update)
+        await db.sql`
           UPDATE pedidos SET 
-          nombre_cliente = ?, telefono = ?, fecha_solicitud = ?, fecha_entrega = ?, 
-          notificar_entrega = ?, requiere_envio = ?, direccion_envio = ?, notas = ?, grand_total = ?, estado = ?
-          WHERE id = ?
-        `);
-        update.run(nombre_cliente, telefono, fecha_solicitud, fecha_entrega, 
-                   notificar_entrega ? 1 : 0, requiere_envio ? 1 : 0, 
-                   direccion_envio, notas, grand_total, estado, pedidoId);
+          nombre_cliente = ${nombre_cliente}, telefono = ${telefono}, fecha_solicitud = ${fecha_solicitud}, fecha_entrega = ${fecha_entrega}, 
+          notificar_entrega = ${notificar_entrega}, requiere_envio = ${requiere_envio}, direccion_envio = ${direccion_envio}, notas = ${notas}, grand_total = ${grand_total}, estado = ${estado}
+          WHERE id = ${finalId}
+        `;
       } else {
-        const insert = db.prepare(`
+        // Operación de Inserción (Insert)
+        // SQLite Cloud devuelve información del comando ejecutado. El ID insertado está en el metadata.
+        const insertResult = await db.sql`
           INSERT INTO pedidos (nombre_cliente, telefono, fecha_solicitud, fecha_entrega, notificar_entrega, requiere_envio, direccion_envio, notas, estado, grand_total)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        const result = insert.run(nombre_cliente, telefono, fecha_solicitud, fecha_entrega, 
-                                  notificar_entrega ? 1 : 0, requiere_envio ? 1 : 0, 
-                                  direccion_envio, notas, estado, grand_total);
-        pedidoId = result.lastInsertRowid;
+          VALUES (${nombre_cliente}, ${telefono}, ${fecha_solicitud}, ${fecha_entrega}, ${notificar_entrega}, ${requiere_envio}, ${direccion_envio}, ${notas}, ${estado}, ${grand_total})
+        `;
+        
+        // El driver guarda el ID autogenerado bajo las propiedades de metadata correspondientes
+        finalId = insertResult.lastID || insertResult.insertId;
       }
 
-      // Sincronizar productos
-      db.prepare('DELETE FROM pedido_productos WHERE pedido_id = ?').run(pedidoId);
-      const insertProd = db.prepare('INSERT INTO pedido_productos (pedido_id, nombre, precio_unidad, cantidad, total) VALUES (?, ?, ?, ?, ?)');
-      for (const p of productos) {
-        insertProd.run(pedidoId, p.nombre, p.precio_unidad, p.cantidad, p.total);
-      }
+      // Sincronizar sub-productos del pedido
+      await db.sql`DELETE FROM pedido_productos WHERE pedido_id = ${finalId}`;
       
-      return pedidoId;
-    });
+      for (const p of productos) {
+        await db.sql`
+          INSERT INTO pedido_productos (pedido_id, nombre, precio_unidad, cantidad, total) 
+          VALUES (${finalId}, ${p.nombre}, ${p.precio_unidad}, ${p.cantidad}, ${p.total})
+        `;
+      }
 
-    const finalId = upsertPedido();
+      // Si todo lo de la BD sale bien hasta aquí, guardamos cambios permanentemente en la nube
+      await db.sql`COMMIT;`;
+    } catch (dbError) {
+      // Si algo falla dentro del bloque SQL, cancelamos los cambios para no dejar datos corruptos
+      await db.sql`ROLLBACK;`;
+      throw dbError;
+    }
 
-    // Manejo de archivos físicos
+    // --- MANEJO DE ARCHIVOS FÍSICOS (Correrá solo si la BD aceptó la transacción) ---
     if (files.length > 0 && files[0] instanceof File) {
       const uploadDir = path.join(process.cwd(), 'public/uploads');
-      // Asegurar que la carpeta exista
       await mkdir(uploadDir, { recursive: true });
 
       for (const file of files) {
@@ -77,9 +84,11 @@ export async function POST(req) {
         
         await writeFile(uploadPath, buffer);
         
-        // Guardar ruta en la BD
-        db.prepare('INSERT INTO pedido_imagenes (pedido_id, ruta_imagen) VALUES (?, ?)')
-          .run(finalId, `/uploads/${filename}`);
+        // Guardar ruta de la imagen en SQLite Cloud de forma directa
+        await db.sql`
+          INSERT INTO pedido_imagenes (pedido_id, ruta_imagen) 
+          VALUES (${finalId}, ${`/uploads/${filename}`})
+        `;
       }
     }
 

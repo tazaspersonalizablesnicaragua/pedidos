@@ -97,6 +97,7 @@ function ListadoContent() {
       
       const res = await fetch(`/api/pedidos/list?${params}`);
       const data = await res.json();
+      console.log("data", data.pedidos);
       setPedidos(data.pedidos || []);
       setPagination(prev => ({ ...prev, total: data.totalPages || 1 }));
     } catch (error) {
@@ -220,7 +221,7 @@ function ListadoContent() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
-                {loading ? (
+                {loading && !pedidos ? (
                   <tr><td colSpan={6} className="p-20 text-center animate-pulse text-slate-600 font-bold uppercase tracking-widest">Sincronizando registros...</td></tr>
                 ) : pedidos.length === 0 ? (
                   <tr><td colSpan={6} className="p-20 text-center text-slate-600 italic">No hay registros que coincidan con la búsqueda.</td></tr>
