@@ -9,11 +9,13 @@ export async function PATCH(req) {
       return NextResponse.json({ error: 'Datos insuficientes' }, { status: 400 });
     }
 
-    const update = db.prepare('UPDATE pedidos SET estado = ? WHERE id = ?');
-    update.run(estado, id);
+    // Ejecutar la actualización directamente en SQLite Cloud de forma asíncrona
+    // El SDK mapea de manera automática y segura los parámetros id y estado
+    await db.sql`UPDATE pedidos SET estado = ${estado} WHERE id = ${id}`;
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    console.error("Error al actualizar estado del pedido (SQLite Cloud):", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

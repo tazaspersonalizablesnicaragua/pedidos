@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server';
 export async function POST(req) {
   try {
     const formData = await req.formData();
-    
+
     // Extraer campos básicos
     const id = formData.get('id'); // Para auto-guardado/actualización
     const nombre_cliente = formData.get('nombre_cliente');
