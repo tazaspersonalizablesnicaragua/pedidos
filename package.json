@@ -9,7 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@libsql/client": "^0.17.3",
+    "@sqlitecloud/drivers": "^1.0.837",
     "@types/jszip": "^3.4.0",
     "better-sqlite3": "^12.9.0",
     "framer-motion": "^12.38.0",
