@@ -2,6 +2,7 @@ import db from '@/lib/db';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { NextResponse } from 'next/server';
+import { put } from '@vercel/blob';
 
 export async function POST(req) {
   try {
@@ -82,12 +83,16 @@ export async function POST(req) {
         const filename = `${Date.now()}-${file.name}`;
         const uploadPath = path.join(uploadDir, filename);
         
-        await writeFile(uploadPath, buffer);
-        
+        const blobR = await put(filename, buffer, {
+          access: 'public',
+          token: 'vercel_blob_rw_1K0NEALx5bqAFQY1_KNMrMdu6FKRXkzXdbRTrYx9jvW3cdt'
+        });
+
+
         // Guardar ruta de la imagen en SQLite Cloud de forma directa
         await db.sql`
           INSERT INTO pedido_imagenes (pedido_id, ruta_imagen) 
-          VALUES (${finalId}, ${`/uploads/${filename}`})
+          VALUES (${finalId}, ${blobR.url})
         `;
       }
     }

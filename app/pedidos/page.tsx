@@ -180,7 +180,6 @@ function PedidoContent() {
         if (p >= 100) clearInterval(interval);
       }, 300);
     });
-    console.log("new files", newFiles);
   };
 
   const handleSave = async (isAuto = false) => {
