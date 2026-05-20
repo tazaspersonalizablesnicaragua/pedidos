@@ -89,7 +89,7 @@ export async function POST(request) {
       affectedRows: ids.length
     });
   
-    } catch (error: any) {
+    } catch (error) {
     console.error('Fallo crítico en el endpoint de borrado masivo (SQLite Cloud):', error);
 
     return NextResponse.json(
