@@ -4,7 +4,7 @@ import path from 'path';
 import { NextResponse } from 'next/server';
 
 // Ejemplo rápido en tu API Route
-export async function POST(request: Request) {
+export async function POST(request) {
   try {
     // 1. Validar el cuerpo de la petición
     const body = await request.json();
@@ -55,7 +55,9 @@ export async function POST(request: Request) {
 
     if (rowsItems && Array.isArray(rowsItems)) {
       rowsItems.forEach((item: any) => {
-        if (item.imagen_url) archivosAEliminar.push(item.imagen_url);
+        if (item.imagen_url) {
+          archivosAEliminar.push(item.imagen_url);
+        }
       });
     }
 
