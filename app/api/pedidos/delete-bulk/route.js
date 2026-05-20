@@ -104,4 +104,4 @@ export async function POST(request) {
     // El SDK de SQLite Cloud cierra las conexiones automáticamente al finalizar la ejecución del script en entornos Serverless,
     // pero si usas conexiones persistentes, asegúrate de mantener actualizado tu string de conexión.
   }
-}
+};
