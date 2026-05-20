@@ -21,12 +21,12 @@ export async function POST(request) {
     // SQLite Cloud utiliza placeholders numerados o estándar (?1, ?2 o ? simples dependiendo de la versión del driver)
     const placeholders = ids.map(() => '?').join(',');
 
-    const rowsItems: any = await db.sql(
+    const rowsItems = await db.sql(
       `SELECT imagen_url FROM pedido_items WHERE pedido_id IN (${placeholders})`,
       ...ids
     );
 
-    const rowsPedidos: any = await db.sql(
+    const rowsPedidos = await db.sql(
       `SELECT archivo_adjunto FROM pedidos WHERE id IN (${placeholders})`,
       ...ids
     );
@@ -51,10 +51,10 @@ export async function POST(request) {
     }
 
     // 5. ELIMINACIÓN FÍSICA DE ARCHIVOS MULTIMEDIA EN EL DISCO LOCAL
-    const archivosAEliminar: string[] = [];
+    const archivosAEliminar = [];
 
     if (rowsItems && Array.isArray(rowsItems)) {
-      rowsItems.forEach((item: any) => {
+      rowsItems.forEach((item) => {
         if (item.imagen_url) {
           archivosAEliminar.push(item.imagen_url);
         }
@@ -62,7 +62,7 @@ export async function POST(request) {
     }
 
     if (rowsPedidos && Array.isArray(rowsPedidos)) {
-      rowsPedidos.forEach((pedido: any) => {
+      rowsPedidos.forEach((pedido) => {
         if (pedido.archivo_adjunto) archivosAEliminar.push(pedido.archivo_adjunto);
       });
     }
