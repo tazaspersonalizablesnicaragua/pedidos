@@ -16,12 +16,12 @@ import {
   Bell,
   Layers,
   ArrowLeft,
-  Download
+  Download,
+  PartyPopper 
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 
-// Editor ReactQuill (Carga dinámica para Next.js)
 const ReactQuill = dynamic(() => import('react-quill-new'), { 
   ssr: false,
   loading: () => <div className="h-48 w-full bg-slate-800 animate-pulse rounded-xl" />
@@ -60,8 +60,12 @@ function PedidoContent() {
   const [orderId, setOrderId] = useState<number | null>(null);
   const [savingStatus, setSavingStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [isZipping, setIsZipping] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  
+  // Estado para controlar la visibilidad del mensaje de éxito
+  const [showSuccessToast, setShowSuccessToast] = useState(false);
 
-  // FIX: Recuperar la página de origen desde la URL (por defecto vuelve a la 1)
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const returnPage = searchParams.get('returnPage') || '1';
   
   const [formData, setFormData] = useState({
@@ -73,15 +77,23 @@ function PedidoContent() {
     requiere_envio: false,
     direccion_envio: '',
     notas: '',
-    estado: 'Nuevo Cliente', // Estado inicial por defecto
-    productos: [{ nombre: '', precio_unidad: 0, cantidad: 1, total: 0 }]
+    estado: 'Nuevo Cliente',
+    productos: [{ nombre: '', precio_unidad: 0, bandwidth: 0, cantidad: 1, total: 0 }]
   });
 
   const [images, setImages] = useState<ImageUpload[]>([]);
   const [carouselIndex, setCarouselIndex] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- CARGAR PEDIDO SI EXISTE ID EN URL ---
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const auth = localStorage.getItem('page_authenticated');
+      if (auth) {
+        setIsAuthenticated(true);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     const id = searchParams.get('id');
     if (id) {
@@ -106,11 +118,10 @@ function PedidoContent() {
           requiere_envio: data.requiere_envio === 1,
           direccion_envio: data.direccion_envio || '',
           notas: data.notas || '',
-          estado: data.estado || 'Nuevo Cliente', // Mapeo del estado desde la BD
+          estado: data.estado || 'Nuevo Cliente', 
           productos: data.productos.length > 0 ? data.productos : [{ nombre: '', precio_unidad: 0, cantidad: 1, total: 0 }]
         });
 
-        // Mapear imágenes existentes
         if (data.imagenes) {
           const existingImages = data.imagenes.map((img: any) => ({
             id: img.id.toString(),
@@ -127,12 +138,19 @@ function PedidoContent() {
     }
   };
 
-  // --- AUTO-GUARDADO (Debounce) ---
   useEffect(() => {
-    if (!formData.nombre_cliente && formData.productos[0].nombre === '') return;
-    const timer = setTimeout(() => handleSave(true), 2500);
-    return () => clearTimeout(timer);
-  }, [formData]);
+    if ((!formData.nombre_cliente && formData.productos[0].nombre === '') || savingStatus === 'saving') return;
+
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+
+    autoSaveTimerRef.current = setTimeout(() => {
+      handleSave(true); // Envía true indicando que es Autosave
+    }, 2500);
+
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [formData, savingStatus]);
 
   const handlePhoneChange = (val: string) => {
     let raw = val.replace(/\D/g, '');
@@ -156,9 +174,7 @@ function PedidoContent() {
   });
 
   const removeProduct = (idx: number) => {
-    //if (formData.productos.length > 1) {
     setFormData({ ...formData, productos: formData.productos.filter((_, i) => i !== idx) });
-    //}
   };
 
   const grandTotal = formData.productos.reduce((sum, p) => sum + p.total, 0);
@@ -183,10 +199,18 @@ function PedidoContent() {
   };
 
   const handleSave = async (isAuto = false) => {
+    if (savingStatus === 'saving') return;
+
+    if (!isAuto && autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+
     setSavingStatus('saving');
     try {
       const data = new FormData();
+      
       if (orderId) data.append('id', orderId.toString());
+      
       data.append('nombre_cliente', formData.nombre_cliente);
       data.append('telefono', formData.telefono);
       data.append('fecha_solicitud', formData.fecha_solicitud);
@@ -199,23 +223,35 @@ function PedidoContent() {
       data.append('grand_total', grandTotal.toString());
       data.append('productos', JSON.stringify(formData.productos));
       
-      // Solo enviar archivos nuevos
       images.forEach(img => { 
-        if (img.file) data.append('images', img.file); 
+        if (img.file && !img.isExisting) data.append('images', img.file); 
       });
 
       const res = await fetch('/api/pedidos', { method: 'POST', body: data });
       const result = await res.json();
       if (result.success) {
-        if (result.id) setOrderId(result.id);
+        if (result.id) {
+          setOrderId(result.id);
+          setImages(prev => prev.map(img => ({ ...img, isExisting: true, file: undefined })));
+        }
         setSavingStatus('saved');
-      } else { setSavingStatus('error'); }
-    } catch (e) { setSavingStatus('error'); }
+        
+        // CORRECCIÓN: Solo mostrar el aviso si NO es un guardado automático (es decir, clic manual)
+        if (!isAuto) {
+          setShowSuccessToast(true);
+          setTimeout(() => setShowSuccessToast(false), 4000);
+        }
+
+      } else { 
+        setSavingStatus('error'); 
+      }
+    } catch (e) { 
+      setSavingStatus('error'); 
+    }
   };
 
   const handleRemoveImage = async (img: ImageUpload) => {
     if (img.isExisting) {
-      // Confirmación para imágenes que ya están en el servidor
       if (!confirm("¿Estás seguro de eliminar esta imagen permanentemente del servidor?")) return;
 
       try {
@@ -226,11 +262,10 @@ function PedidoContent() {
         if (!result.success) throw new Error(result.error);
       } catch (error) {
         alert("Error al eliminar la imagen del servidor");
-        return; // No la quitamos de la vista si falló el borrado real
+        return;
       }
     }
 
-    // Quitar de la vista (aplica para nuevas y existentes borradas con éxito)
     setImages(prev => prev.filter(i => i.id !== img.id));
   };
 
@@ -238,38 +273,27 @@ function PedidoContent() {
     if (images.length === 0) return;
     setIsZipping(true);
     try {
-      // Importación dinámica de JSZip al hacer clic
       const JSZip = (await import('jszip')).default;
       const zip = new JSZip();
 
-      // Descargar cada imagen de forma asíncrona paralela/secuencial limpia
       for (let i = 0; i < images.length; i++) {
         const img = images[i];
         try {
           const response = await fetch(img.preview);
           const blob = await response.blob();
-          
-          // Extraer extensión del archivo o asignar 'jpg' por defecto
           const ext = blob.type.split('/')[1] || 'jpg';
-          // Nombrar usando el ID del pedido y un correlativo estructurado
           const filename = `pedido_${orderId || 'nuevo'}_img_${i + 1}.${ext}`;
-          
           zip.file(filename, blob);
         } catch (err) {
           console.error(`Error procesando archivo index ${i}:`, err);
         }
       }
 
-      // Generar el archivo ZIP binario
       const content = await zip.generateAsync({ type: 'blob' });
-      
-      // Crear el disparador de descarga nativo
       const link = document.createElement('a');
       link.href = URL.createObjectURL(content);
       link.download = `Orden_${orderId ? orderId.toString().padStart(5, '0') : 'Nueva'}_Archivos.zip`;
       link.click();
-      
-      // Liberar memoria del objeto URL
       URL.revokeObjectURL(link.href);
     } catch (error) {
       console.error("Error al comprimir la galería:", error);
@@ -280,7 +304,7 @@ function PedidoContent() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 p-4 md:p-10 font-sans text-slate-200">
+    <div className="min-h-screen bg-slate-950 p-4 md:p-10 font-sans text-slate-200 relative overflow-x-hidden">
       <style jsx global>{`
         .ql-container.ql-snow { border-color: #334155 !important; border-bottom-left-radius: 0.75rem; border-bottom-right-radius: 0.75rem; }
         .ql-toolbar.ql-snow { border-color: #334155 !important; background-color: #1e293b !important; border-top-left-radius: 0.75rem; border-top-right-radius: 0.75rem; }
@@ -290,11 +314,33 @@ function PedidoContent() {
         .ql-snow .ql-picker { color: #cbd5e1 !important; }
       `}</style>
 
+      {/* Mensaje Amigable Flotante (Toast Notification) */}
+      <AnimatePresence>
+        {showSuccessToast && (
+          <motion.div 
+            initial={{ opacity: 0, y: -50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.9 }}
+            className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 border border-emerald-500/30 text-white px-6 py-4 rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.7)] flex items-center gap-4 max-w-md backdrop-blur-md"
+          >
+            <div className="bg-emerald-500/20 p-2.5 rounded-xl text-emerald-400 shrink-0">
+              <PartyPopper size={24} className="animate-bounce" />
+            </div>
+            <div>
+              <h4 className="font-black text-sm text-emerald-400 tracking-wide uppercase">¡Pedido Guardado!</h4>
+              <p className="text-xs text-slate-300 mt-0.5">La orden se ha sincronizado correctamente en el servidor de forma segura.</p>
+            </div>
+            <button onClick={() => setShowSuccessToast(false)} className="text-slate-500 hover:text-white transition-colors ml-2">
+              <X size={16} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="max-w-6xl mx-auto bg-slate-900 shadow-[0_20px_50px_rgba(0,0,0,0.5)] rounded-3xl overflow-hidden border border-slate-800">
         
         <div className="bg-slate-950 p-6 flex justify-between items-center border-b border-slate-800">
           <div className="flex items-center gap-4">
-            {/* FIX: Se añade la query ?page= con la página correcta al botón regresar */}
             <Link href={`/pedidos/listado?page=${returnPage}&highlightId=${orderId}`} className="text-slate-500 hover:text-white transition-colors">
               <ArrowLeft size={24} />
             </Link>
@@ -309,6 +355,7 @@ function PedidoContent() {
         </div>
 
         <div className="p-8 space-y-12">
+          {/* ... Resto de tu formulario de datos de cliente ... */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
             <div className="space-y-6">
               <div className="relative">
@@ -325,21 +372,24 @@ function PedidoContent() {
                   value={formData.telefono} onChange={e => handlePhoneChange(e.target.value)}
                 />
               </div>
-              {/* Nuevo Campo de Selección de Estado */}
-              <div className="relative">
-                <label className="text-[10px] font-bold text-slate-500 uppercase absolute -top-2 left-3 bg-slate-900 px-1 flex items-center gap-1">
-                  <Layers size={10} /> Estado de Trabajo
-                </label>
-                <select 
-                  className="w-full bg-slate-950 border border-slate-700 p-4 rounded-xl text-sm font-bold outline-none focus:border-blue-600 transition-all text-white cursor-pointer"
-                  value={formData.estado}
-                  onChange={e => setFormData({...formData, estado: e.target.value})}
-                >
-                  {ESTADOS_DISPONIBLES.map(est => (
-                    <option key={est} value={est} className="bg-slate-900 text-slate-200 font-bold">{est}</option>
-                  ))}
-                </select>
-              </div>
+
+              {isAuthenticated && (
+                <div className="relative">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase absolute -top-2 left-3 bg-slate-900 px-1 flex items-center gap-1">
+                    <Layers size={10} /> Estado de Trabajo
+                  </label>
+                  <select 
+                    className="w-full bg-slate-950 border border-slate-700 p-4 rounded-xl text-sm font-bold outline-none focus:border-blue-600 transition-all text-white cursor-pointer"
+                    value={formData.estado}
+                    onChange={e => setFormData({...formData, estado: e.target.value})}
+                  >
+                    {ESTADOS_DISPONIBLES.map(est => (
+                      <option key={est} value={est} className="bg-slate-900 text-slate-200 font-bold">{est}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <span className="text-[10px] font-bold text-slate-500 uppercase ml-1">Fecha Solicitud</span>
@@ -370,11 +420,11 @@ function PedidoContent() {
             </div>
           </div>
 
+          {/* ... Bloque de Productos ... */}
           <div className="space-y-4">
             <h2 className="font-black text-blue-500 uppercase text-xs tracking-widest ml-1">Productos y Servicios</h2>
             <div className="border border-slate-800 rounded-2xl overflow-hidden bg-slate-950">
               
-              {/* 1. Vista de Escritorio */}
               <table className="w-full text-left hidden md:table">
                 <thead className="bg-slate-800/50 text-[10px] font-black uppercase text-slate-400">
                   <tr>
@@ -394,7 +444,6 @@ function PedidoContent() {
                       <td className="p-2 text-center">
                         <div className="flex items-center justify-center bg-slate-900 border border-slate-700 rounded-lg px-2">
                            <span className="text-slate-500 text-xs">C$</span>
-                           {/* FIX PRECIO: Elimina el cero inicial al escribir en escritorio */}
                            <input 
                              type="number" 
                              inputMode="decimal" 
@@ -411,7 +460,6 @@ function PedidoContent() {
                         </div>
                       </td>
                       <td className="p-2 text-center">
-                        {/* FIX CANTIDAD: Elimina el cero inicial al escribir en escritorio */}
                         <input 
                           type="number" 
                           inputMode="numeric" 
@@ -435,7 +483,6 @@ function PedidoContent() {
                 </tbody>
               </table>
 
-              {/* 2. Vista Móvil (Tarjetas Apiladas Independientes) */}
               <div className="block md:hidden divide-y divide-slate-800">
                 {formData.productos.map((p, i) => (
                   <div key={i} className="p-4 space-y-4 bg-slate-950 hover:bg-slate-900/20 transition-colors">
@@ -462,7 +509,6 @@ function PedidoContent() {
                         <span className="text-[10px] font-bold text-slate-500 uppercase ml-1">Precio Unitario</span>
                         <div className="flex items-center bg-slate-900 border border-slate-700 rounded-xl px-3">
                           <span className="text-slate-500 text-xs font-bold mr-1">C$</span>
-                          {/* FIX PRECIO MÓVIL: Limpieza estricta de cadenas con ceros a la izquierda */}
                           <input 
                             type="number" 
                             inputMode="decimal"
@@ -481,11 +527,9 @@ function PedidoContent() {
 
                       <div className="space-y-1">
                         <span className="text-[10px] font-bold text-slate-500 uppercase ml-1">Cantidad</span>
-                        {/* FIX CANTIDAD MÓVIL: Limpieza estricta de cadenas con ceros a la izquierda */}
                         <input 
                           type="number" 
                           inputMode="numeric"
-                          pattern="[0-9]*"
                           className="w-full bg-slate-900 border border-slate-700 p-3 rounded-xl text-center text-white text-sm outline-none focus:border-blue-600" 
                           value={p.cantidad} 
                           onChange={e => {
@@ -507,7 +551,6 @@ function PedidoContent() {
                 ))}
               </div>
 
-              {/* Footer Común Adaptable (Botón e Importes Totales) */}
               <div className="p-6 bg-slate-950 flex flex-col sm:flex-row justify-between items-center gap-4 border-t border-slate-800">
                 <button onClick={addProduct} className="w-full sm:w-auto flex items-center justify-center gap-2 text-blue-500 font-black text-xs uppercase hover:text-blue-400 transition-all border border-slate-800 sm:border-none p-3 sm:p-0 rounded-xl bg-slate-900/40 sm:bg-transparent">
                   <Plus size={18} className="bg-blue-500/10 rounded-full p-0.5" /> Agregar Item
@@ -521,6 +564,7 @@ function PedidoContent() {
             </div>
           </div>
 
+          {/* ... Notas y Galería ... */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
             <div className="space-y-4">
               <h2 className="font-black text-blue-500 uppercase text-xs tracking-widest ml-1">Notas</h2>
@@ -530,7 +574,6 @@ function PedidoContent() {
             </div>
 
             <div className="space-y-4">
-              {/* FIX: Se añade cabecera flex con botón de descarga empaquetado */}
               <div className="flex justify-between items-center ml-1">
                 <h2 className="font-black text-blue-500 uppercase text-xs tracking-widest">Galería</h2>
                 {images.length > 0 && (
@@ -572,12 +615,18 @@ function PedidoContent() {
             </div>
           </div>
 
-          <button onClick={() => handleSave()} className="w-full bg-blue-600 text-white py-5 rounded-2xl font-black text-xl hover:bg-blue-500 shadow-[0_10px_30px_rgba(37,99,235,0.3)] flex items-center justify-center gap-3">
-            <Save size={24}/> {orderId ? 'ACTUALIZAR ORDEN' : 'GUARDAR ORDEN'}
+          {/* BOTÓN MANUAL DE GUARDADO */}
+          <button 
+            onClick={() => handleSave(false)} // Envía false para activar el Toast de éxito
+            disabled={savingStatus === 'saving'}
+            className="w-full bg-blue-600 text-white py-5 rounded-2xl font-black text-xl hover:bg-blue-500 shadow-[0_10px_30px_rgba(37,99,235,0.3)] flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          >
+            <Save size={24}/> {savingStatus === 'saving' ? 'PROCESANDO...' : orderId ? 'ACTUALIZAR ORDEN' : 'GUARDAR ORDEN'}
           </button>
         </div>
       </div>
 
+      {/* ... Carrusel de imágenes ... */}
       <AnimatePresence>
         {carouselIndex !== null && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-4">
@@ -592,7 +641,6 @@ function PedidoContent() {
   );
 }
 
-// Wrapper para Suspense necesario al usar useSearchParams en Next.js
 export default function PedidoPage() {
   return (
     <Suspense fallback={<div className="min-h-screen bg-slate-950 flex items-center justify-center text-white">Cargando...</div>}>

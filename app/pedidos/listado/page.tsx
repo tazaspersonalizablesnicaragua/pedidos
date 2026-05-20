@@ -41,15 +41,18 @@ function ListadoContent() {
   // Capturar el ID que se desea auto-enfocar al cargar el componente
   const highlightId = searchParams.get('highlightId');
 
-  const [pedidos, setPedidos] = useState([]);
+  const [pedidos, setPedidos] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [tipoFecha, setTipoFecha] = useState('fecha_solicitud');
-  const [estadoFilter, setEstadoFilter] = useState(''); // Estado del filtro nuevo
+  const [estadoFilter, setEstadoFilter] = useState(''); 
   const [dates, setDates] = useState({ ini: '', fin: '' });
   const [pagination, setPagination] = useState({ current: initialPage, total: 1 });
   const [loading, setLoading] = useState(true);
 
-  // FIX: Estado local para controlar el pedido resaltado dinámicamente
+  // NUEVO: Estado para IDs seleccionados (Bulk Delete)
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+
+  // Estado local para controlar el pedido resaltado dinámicamente
   const [activeHighlightId, setActiveHighlightId] = useState<string | null>(null);
 
   // Sincronizar el parámetro de la URL con el estado local al montar
@@ -62,18 +65,18 @@ function ListadoContent() {
 
   useEffect(() => {
     fetchPedidos();
+    // Limpiar selección al cambiar de filtros o página para evitar errores
+    setSelectedIds([]);
   }, [search, dates, pagination.current, tipoFecha, estadoFilter]);
 
-  // FIX: Efecto encargado de desplazar la pantalla suavemente hacia el pedido editado
+  // Efecto encargado de desplazar la pantalla suavemente hacia el pedido editado
   useEffect(() => {
     if (!loading && activeHighlightId && pedidos.length > 0) {
-      // Pequeño timeout seguro para garantizar el render de los nodos en el DOM
       const timer = setTimeout(() => {
         const targetElement = document.getElementById(`pedido-${activeHighlightId}`);
         if (targetElement) {
           targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-          // Limpia el parámetro de la URL sutilmente sin recargar la página
           const url = new URL(window.location.href);
           url.searchParams.delete('highlightId');
           window.history.replaceState({}, '', url.toString());
@@ -91,13 +94,12 @@ function ListadoContent() {
         fecha_ini: dates.ini,
         fecha_fin: dates.fin,
         tipo_fecha: tipoFecha,
-        estado: estadoFilter, // Enviamos el filtro al backend
+        estado: estadoFilter, 
         page: pagination.current.toString()
       });
       
       const res = await fetch(`/api/pedidos/list?${params}`);
       const data = await res.json();
-      console.log("data", data.pedidos);
       setPedidos(data.pedidos || []);
       setPagination(prev => ({ ...prev, total: data.totalPages || 1 }));
     } catch (error) {
@@ -116,7 +118,6 @@ function ListadoContent() {
       });
       const data = await res.json();
       if (data.success) {
-        // Actualizar el estado localmente de inmediato para evitar flashes de carga
         setPedidos((prev: any) =>
           prev.map((p: any) => p.id === id ? { ...p, estado: nuevoEstado } : p)
         );
@@ -134,13 +135,13 @@ function ListadoContent() {
     if (!totalConfirm) return;
 
     try {
-      const res = await fetch(`/api/pedidos/delete?id=${id}`, {
+      const res = await fetch(`/api/api/pedidos/delete?id=${id}`, {
         method: 'DELETE'
       });
       const result = await res.json();
       
       if (result.success) {
-        // Forzar actualización del listado actual
+        setSelectedIds(prev => prev.filter(item => item !== id));
         fetchPedidos();
       } else {
         alert(`Error al procesar la solicitud: ${result.error}`);
@@ -148,6 +149,54 @@ function ListadoContent() {
     } catch (error) {
       console.error("Error en la solicitud de eliminación:", error);
       alert("Hubo un fallo crítico de comunicación con el servidor.");
+    }
+  };
+
+  // NUEVO: Handler para eliminación masiva (Bulk Delete)
+  const handleBulkDelete = async () => {
+    const totalConfirm = confirm(`¿Está completamente seguro de eliminar las ${selectedIds.length} órdenes seleccionadas?\nEsta acción borrará permanentemente de forma masiva todos los productos vinculados y archivos multimedia.`);
+    
+    if (!totalConfirm) return;
+
+    try {
+      // Nota: Asumiendo que tu API soporta la eliminación por lotes. 
+      // Si la API actual sólo recibe un ID, puedes iterar las llamadas o adaptar la query /api/pedidos/delete?ids=1,2,3
+      const res = await fetch(`/api/pedidos/delete-bulk`, {
+        method: 'POST', // O DELETE con body dependiendo de tu backend
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedIds })
+      });
+      
+      const result = await res.json();
+      
+      if (result.success) {
+        alert(`${selectedIds.length} órdenes eliminadas con éxito.`);
+        setSelectedIds([]);
+        fetchPedidos();
+      } else {
+        alert(`Error al procesar la eliminación masiva: ${result.error}`);
+      }
+    } catch (error) {
+      console.error("Error en eliminación masiva:", error);
+      alert("Hubo un fallo en la red al intentar borrar en lote.");
+    }
+  };
+
+  // NUEVO: Funciones auxiliares de selección de Checkboxes
+  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      const currentIds = pedidos.map((p: any) => p.id);
+      setSelectedIds(currentIds);
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  const handleSelectItem = (id: number, checked: boolean) => {
+    if (checked) {
+      setSelectedIds(prev => [...prev, id]);
+    } else {
+      setSelectedIds(prev => prev.filter(item => item !== id));
     }
   };
 
@@ -160,9 +209,22 @@ function ListadoContent() {
             <h1 className="text-3xl font-black tracking-tighter text-white italic uppercase">Historial de Órdenes</h1>
             <p className="text-slate-500 text-sm">Registro centralizado de pedidos y producción.</p>
           </div>
-          <Link href="/pedidos" className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold transition-all flex items-center gap-2 shadow-lg shadow-blue-900/20">
-            <Plus size={20} /> Nueva Orden
-          </Link>
+          
+          <div className="flex gap-3 w-full md:w-auto">
+            {/* NUEVO: Botón de borrado masivo condicional */}
+            {selectedIds.length > 0 && (
+              <button 
+                onClick={handleBulkDelete}
+                className="bg-red-600/10 hover:bg-red-600 text-red-400 hover:text-white border border-red-500/20 px-5 py-3 rounded-xl font-bold transition-all flex items-center gap-2 shadow-lg shadow-red-950/20 text-sm uppercase tracking-wider"
+              >
+                <Trash2 size={18} /> Eliminar Seleccionados ({selectedIds.length})
+              </button>
+            )}
+            
+            <Link href="/pedidos" className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold transition-all flex items-center gap-2 shadow-lg shadow-blue-900/20 text-sm whitespace-nowrap">
+              <Plus size={20} /> Nueva Orden
+            </Link>
+          </div>
         </div>
 
         {/* Filtros */}
@@ -200,7 +262,7 @@ function ListadoContent() {
             <input type="date" className="bg-slate-950 border border-slate-700 p-3 rounded-xl outline-none text-sm" value={dates.fin} onChange={(e) => setDates({...dates, fin: e.target.value})} />
           </div>
 
-          <button onClick={() => { setDates({ini:'', fin:''}); setEstadoFilter('');}} className="text-slate-500 hover:text-white text-xs font-bold uppercase tracking-widest text-center">
+          <button onClick={() => { setDates({ini:'', fin:''}); setEstadoFilter(''); setSelectedIds([]); }} className="text-slate-500 hover:text-white text-xs font-bold uppercase tracking-widest text-center">
             Limpiar Filtros
           </button>
         </div>
@@ -211,6 +273,15 @@ function ListadoContent() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-950 text-slate-500 text-[10px] font-black uppercase tracking-widest">
+                  {/* NUEVO: Th para el selector general */}
+                  <th className="p-5 w-12 text-center">
+                    <input 
+                      type="checkbox" 
+                      className="w-4 h-4 rounded accent-blue-600 cursor-pointer bg-slate-950 border-slate-700"
+                      checked={pedidos.length > 0 && selectedIds.length === pedidos.length}
+                      onChange={handleSelectAll}
+                    />
+                  </th>
                   <th className="p-5">ID</th>
                   <th className="p-5">Cliente</th>
                   <th className="p-5">Entrega</th>
@@ -221,21 +292,33 @@ function ListadoContent() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
-                {loading && !pedidos ? (
-                  <tr><td colSpan={6} className="p-20 text-center animate-pulse text-slate-600 font-bold uppercase tracking-widest">Sincronizando registros...</td></tr>
+                {loading && pedidos.length === 0 ? (
+                  <tr><td colSpan={8} className="p-20 text-center animate-pulse text-slate-600 font-bold uppercase tracking-widest">Sincronizando registros...</td></tr>
                 ) : pedidos.length === 0 ? (
-                  <tr><td colSpan={6} className="p-20 text-center text-slate-600 italic">No hay registros que coincidan con la búsqueda.</td></tr>
+                  <tr><td colSpan={8} className="p-20 text-center text-slate-600 italic">No hay registros que coincidan con la búsqueda.</td></tr>
                 ) : pedidos.map((p: any) => {
                   const isFocused = p.id.toString() === highlightId;
+                  const isChecked = selectedIds.includes(p.id);
                 return (
                   <tr 
                     key={p.id}
                     id={`pedido-${p.id}`} 
                     className={`transition-all duration-500 border-l-4 ${
-                        isFocused 
-                          ? 'bg-blue-600/10 border-blue-500 text-white font-medium shadow-[inset_0_0_20px_rgba(37,99,235,0.15)]' 
-                          : 'hover:bg-slate-800/30 border-transparent transition-colors group'
+                        isChecked
+                          ? 'bg-red-500/5 border-red-500 text-white font-medium shadow-[inset_0_0_20px_rgba(239,68,68,0.05)]'
+                          : isFocused 
+                            ? 'bg-blue-600/10 border-blue-500 text-white font-medium shadow-[inset_0_0_20px_rgba(37,99,235,0.15)]' 
+                            : 'hover:bg-slate-800/30 border-transparent transition-colors group'
                       }`}>
+                    {/* NUEVO: Td con checkbox para cada item individual */}
+                    <td className="p-5 text-center">
+                      <input 
+                        type="checkbox" 
+                        className="w-4 h-4 rounded accent-blue-600 cursor-pointer bg-slate-950 border-slate-700"
+                        checked={isChecked}
+                        onChange={(e) => handleSelectItem(p.id, e.target.checked)}
+                      />
+                    </td>
                     <td className="p-5 font-mono text-blue-500 text-xs font-bold">#{p.id.toString().padStart(5, '0')}</td>
                     <td className="p-5">
                       <div className="flex flex-col">
@@ -246,7 +329,6 @@ function ListadoContent() {
                     <td className="p-5">
                       <span className="text-amber-500 text-xs font-black">{p.fecha_entrega || 'Pendiente'}</span>
                     </td>
-                    {/* Selector interactivo de estado */}
                     <td className="p-5">
                       <div className={`inline-flex items-center rounded-xl border px-2 py-1 gap-1 text-xs font-bold transition-all ${getStatusStyles(p.estado)}`}>
                         <Layers size={12} className="opacity-70" />
@@ -270,8 +352,7 @@ function ListadoContent() {
                     <td className="p-5 text-right font-black text-white">
                       C$ {p.grand_total?.toLocaleString(undefined, {minimumFractionDigits: 2})}
                     </td>
-                    <td className="p-5 text-center">
-                      {/* FIX: Se añade &returnPage con el número de página actual al href */}
+                    <td className="p-5 text-center flex items-center justify-center gap-2">
                         <Link 
                           href={`/pedidos?id=${p.id}&returnPage=${pagination.current}`}
                           className="inline-flex items-center gap-2 bg-slate-800 hover:bg-blue-600 text-slate-300 hover:text-white px-4 py-2 rounded-xl text-xs font-bold transition-all"
