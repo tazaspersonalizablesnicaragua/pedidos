@@ -119,7 +119,7 @@ function PedidoContent() {
           direccion_envio: data.direccion_envio || '',
           notas: data.notas || '',
           estado: data.estado || 'Nuevo Cliente', 
-          productos: data.productos.length > 0 ? data.productos : [{ nombre: '', precio_unidad: 0, cantidad: 1, total: 0 }]
+          productos: data.productos.length > 0 ? data.productos : [{ nombre: '', precio_unidad: 0, cantidad: 1, total: 0, bandwidth: 0 }]
         });
 
         if (data.imagenes) {
@@ -170,7 +170,7 @@ function PedidoContent() {
 
   const addProduct = () => setFormData({
     ...formData, 
-    productos: [...formData.productos, { nombre: '', precio_unidad: 0, cantidad: 1, total: 0 }]
+    productos: [...formData.productos, { nombre: '', precio_unidad: 0, bandwidth: 0, cantidad: 1, total: 0 }]
   });
 
   const removeProduct = (idx: number) => {
